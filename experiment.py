@@ -13,6 +13,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import sklearn
 from scipy.stats import loguniform
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -34,13 +35,17 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 DATA_PATH = Path(__file__).parent / 'data' / 'healthcare-dataset-stroke-data.csv'
+# sklearn >=1.8 deprecated `penalty` in favor of `l1_ratio`.
+SKLEARN_USE_L1_RATIO = tuple(int(i) for i in sklearn.__version__.split('.')[:2]) >= (1, 8)
+PENALTY_KEY = 'model__l1_ratio' if SKLEARN_USE_L1_RATIO else 'model__penalty'
+PENALTY_VALUES = [1.0, 0.0] if SKLEARN_USE_L1_RATIO else ['l1', 'l2']
 GRID = {
-    'model__penalty': ['l1', 'l2'],
+    PENALTY_KEY: PENALTY_VALUES,
     'model__C': [0.03, 0.3, 3.0],
     'model__class_weight': [None, 'balanced'],
 }
 RANDOM_SPACE = {
-    'model__penalty': ['l1', 'l2'],
+    PENALTY_KEY: PENALTY_VALUES,
     'model__C': loguniform(0.01, 100.0),
     'model__class_weight': [None, 'balanced'],
 }
@@ -89,7 +94,9 @@ def make_pipeline(x: pd.DataFrame, *, c: float = 1.0,
         ('preprocess', ColumnTransformer(transformers, remainder='drop')),
         ('model', LogisticRegression(
             solver='liblinear', max_iter=2000, C=c,
-            penalty=penalty, class_weight=class_weight, random_state=42,
+            class_weight=class_weight, random_state=42,
+            **({'l1_ratio': 1.0 if penalty == 'l1' else 0.0}
+               if SKLEARN_USE_L1_RATIO else {'penalty': penalty}),
         )),
     ])
 
@@ -201,7 +208,7 @@ def regularization_study(x: pd.DataFrame, y: pd.Series,
     for penalty in ('l1', 'l2'):
         search = GridSearchCV(
             make_pipeline(x), {
-                'model__penalty': [penalty],
+                PENALTY_KEY: [1.0 if penalty == 'l1' else 0.0] if SKLEARN_USE_L1_RATIO else [penalty],
                 'model__C': GRID['model__C'],
                 'model__class_weight': GRID['model__class_weight'],
             }, cv=cv_splits(folds, seed), scoring='average_precision',
