@@ -101,6 +101,12 @@ def make_pipeline(x: pd.DataFrame, *, c: float = 1.0,
     ])
 
 
+def plain_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Convert NumPy scalar hyperparameters into reusable Python values."""
+    return {name: value.item() if isinstance(value, np.generic) else value
+            for name, value in params.items()}
+
+
 def cv_splits(folds: int, seed: int) -> StratifiedKFold:
     return StratifiedKFold(n_splits=folds, shuffle=True, random_state=seed)
 
@@ -133,7 +139,7 @@ def run_searches(x: pd.DataFrame, y: pd.Series, folds: int,
         elapsed = time.perf_counter() - started
         summaries[name] = {
             'best_cv_ap': float(search.best_score_),
-            'best_params': search.best_params_,
+            'best_params': plain_params(search.best_params_),
             'tested_candidates': int(len(search.cv_results_['params'])),
             'total_cv_fits': int(len(search.cv_results_['params']) * folds),
             'elapsed_seconds': float(elapsed),
@@ -175,7 +181,8 @@ def optuna_search(x: pd.DataFrame, y: pd.Series, folds: int,
     return {
         'best_cv_ap': float(study.best_value),
         'best_params': {'model__C': float(p['C']),
-                        'model__penalty': p['penalty'],
+                        PENALTY_KEY: (1.0 if p['penalty'] == 'l1' else 0.0)
+                                     if SKLEARN_USE_L1_RATIO else p['penalty'],
                         'model__class_weight': None if p['class_weight'] == 'none' else 'balanced'},
         'tested_candidates': int(len(study.trials)),
         'total_cv_fits': int(len(study.trials) * folds),
@@ -218,7 +225,7 @@ def regularization_study(x: pd.DataFrame, y: pd.Series,
         coef = search.best_estimator_.named_steps['model'].coef_.ravel()
         results[penalty] = {
             'best_cv_ap': float(search.best_score_),
-            'best_params': search.best_params_,
+            'best_params': plain_params(search.best_params_),
             'nonzero_coefficients': int(np.count_nonzero(np.abs(coef) > 1e-8)),
             'total_coefficients': int(coef.size),
         }
@@ -245,16 +252,16 @@ def markdown_report(r: dict[str, Any]) -> str:
 - Наблюдений: **{r['data']['rows']}**, признаков после удаления `id`: **{r['data']['features']}**.
 - Положительный класс: **{r['data']['positives']}** ({r['data']['prevalence']:.2%}).
 - Train/development: **{r['split']['train_rows']}**, test/holdout: **{r['split']['test_rows']}**. Стратификация 80/20, seed={r['split']['seed']}.
-- **Основная метрика — Average Precision (AP, площадь под precision–recall кривой в реализации sklearn)**; accuracy при редком положительном классе неинформативна.
+- **Основная метрика — Average Precision (AP)**: средневзвешенная точность по приростам полноты на PR-кривой в `sklearn`; это не тождественно трапецеидальной PR-AUC. Accuracy при редком положительном классе неинформативна.
 - Imputer, StandardScaler и OneHotEncoder обучаются **только внутри Pipeline в каждой обучающей части**.
-- Подбор модели и все внутренние/внешние фолды уровня C используют **только development**. Тест не участвовал в подборе.
+- Подбор модели, оба демонстрационных разбиения уровня A и все фолды уровня C используют **только development**. Финальный тест не используется до завершения всех поисков и сравнения моделей.
 
 ## Уровень A — одиночное разбиение против пяти фолдов
 
-- Holdout AP, seed={a['seed_1']}: **{fmt(a['holdout_ap_1'])}**.
-- Holdout AP, seed={a['seed_2']}: **{fmt(a['holdout_ap_2'])}** (второе разбиение приведено **только для учебного сравнения**).
+- Демо-разбиение **внутри development**, seed={a['seed_1']}: AP **{fmt(a['holdout_ap_1'])}**.
+- Демо-разбиение **внутри development**, seed={a['seed_2']}: AP **{fmt(a['holdout_ap_2'])}**. Оба не используют итоговый тест.
 - CV AP по фолдам **только на development**: {', '.join(fmt(x) for x in a['cv_scores'])}.
-- Среднее: **{fmt(a['cv_mean'])}**, выборочное стандартное отклонение: **{fmt(a['cv_std'])}** (размах **{fmt(a['cv_range'])}**).
+- Среднее: **{fmt(a['cv_mean'])}**, выборочное стандартное отклонение: **{fmt(a['cv_std'])}** (размах **{fmt(a['cv_range'])}**, или **{a['cv_range'] * 100:.2f} процентных пункта**).
 
 **Вывод:** оценки на фолдах колеблются из-за состава наблюдений и редкости положительного класса. Один train/test split может дать слишком оптимистичную или пессимистичную оценку; CV показывает разброс и устойчивость. При другом random_state метрика изменяется, поэтому нельзя делать вывод только по одному разбиению.
 
@@ -265,7 +272,7 @@ def markdown_report(r: dict[str, Any]) -> str:
 - Лучший RandomizedSearchCV: **{fmt(b['random_cv_ap'])}**; параметры: `{b['random_params']}`.
 - Модель выбрана **по development CV**, победитель: **{b['winner']}**.
 - AP на untouched holdout до подбора: **{fmt(b['baseline_test']['average_precision'])}**, после: **{fmt(b['tuned_test']['average_precision'])}**.
-- Recall: до **{fmt(b['baseline_test']['recall'])}**, после **{fmt(b['tuned_test']['recall'])}**. Дополнительно: F1, balanced accuracy в `metrics.json`.
+- Recall при фиксированном пороге 0.5: до **{fmt(b['baseline_test']['recall'])}**, после **{fmt(b['tuned_test']['recall'])}**. AP оценивает ранжирование, а не качество решений при пороге 0.5. Дополнительно: F1, balanced accuracy в `metrics.json`.
 
 **Почему три оценки отличаются?** Среднее CV базовой модели измеряет работу без подбора; максимум CV поиска зависит от выбора лучшего из нескольких кандидатов и потому может быть оптимистичным; независимый holdout проверяет обобщение на ранее не использованных при выборе данных. Оптимизм — ожидаемая тенденция, но разница не обязана быть положительной на каждом эксперименте.
 
@@ -274,7 +281,7 @@ def markdown_report(r: dict[str, Any]) -> str:
 - Nested CV: внешний цикл **{c['outer_folds']}** фолдов, внутренний **{c['inner_folds']}** фолдов; оценка AP по внешним фолдам: {', '.join(fmt(v) for v in c['outer_scores'])}.
 - Средняя независимая nested CV AP: **{fmt(c['nested_mean_ap'])}** (std={fmt(c['nested_std_ap'])}).
 - Обычный лучший GridSearchCV AP: **{fmt(c['ordinary_grid_cv_ap'])}**.
-- **Оценка оптимизма** (ordinary best CV − nested CV): **{fmt(c['optimism_gap'])}**. Может быть отрицательна из-за вариации выборок; это не математически гарантированная положительная величина.
+- **Приближённая оценка оптимизма** (ordinary best CV − nested CV): **{fmt(c['optimism_gap'])}**. Эта разница не изолирует строго смещение отбора: отличаются внешние фолды и размеры обучающих выборок; знак может быть любым.
 
 ### Grid Search / Random Search / Bayesian (Optuna)
 
@@ -309,23 +316,23 @@ def run_experiment(data_path: Path = DATA_PATH, output_dir: Path = Path('results
     outer_folds, inner_folds = (3, 2) if quick else (5, 3)
     b_folds = 2 if quick else 5
     iterations = 4 if quick else 12
-    baseline = make_pipeline(x_train)
-    baseline.fit(x_train, y_train)
-    base_test = holdout_metrics(baseline, x_test, y_test)
-
-    # Level A: second holdout uses a different fixed split solely to show variability.
-    x_train_2, x_test_2, y_train_2, y_test_2 = train_test_split(
-        x, y, test_size=0.2, stratify=y, random_state=seed + 7,
-    )
-    baseline2 = make_pipeline(x_train_2)
-    baseline2.fit(x_train_2, y_train_2)
+    # Level A: both demonstration splits are strictly inside development;
+    # no model trained for the demonstration has access to final holdout rows.
+    a_holdout_scores = []
+    for a_seed in (seed, seed + 7):
+        a_train, a_validation, ay_train, ay_validation = train_test_split(
+            x_train, y_train, test_size=0.2, stratify=y_train, random_state=a_seed,
+        )
+        demo = make_pipeline(a_train)
+        demo.fit(a_train, ay_train)
+        a_holdout_scores.append(holdout_metrics(demo, a_validation, ay_validation)['average_precision'])
     cv_a = cross_val_score(make_pipeline(x_train), x_train, y_train,
                           cv=cv_splits(5 if not quick else 3, seed),
                           scoring='average_precision', error_score='raise')
     a = {
         'seed_1': seed, 'seed_2': seed + 7,
-        'holdout_ap_1': base_test['average_precision'],
-        'holdout_ap_2': holdout_metrics(baseline2, x_test_2, y_test_2)['average_precision'],
+        'holdout_ap_1': a_holdout_scores[0],
+        'holdout_ap_2': a_holdout_scores[1],
         'cv_scores': cv_a.tolist(), 'cv_mean': float(np.mean(cv_a)),
         'cv_std': float(np.std(cv_a, ddof=1)),
         'cv_range': float(np.max(cv_a) - np.min(cv_a)),
@@ -337,16 +344,6 @@ def run_experiment(data_path: Path = DATA_PATH, output_dir: Path = Path('results
                               error_score='raise')
     searches = run_searches(x_train, y_train, b_folds, seed, iterations)
     best_method = max(('grid', 'random'), key=lambda name: searches[name]['best_cv_ap'])
-    tuned_test = holdout_metrics(searches[best_method]['_estimator'], x_test, y_test)
-    b = {
-        'baseline_cv_ap': float(np.mean(base_cv)),
-        'grid_cv_ap': searches['grid']['best_cv_ap'],
-        'grid_params': searches['grid']['best_params'],
-        'random_cv_ap': searches['random']['best_cv_ap'],
-        'random_params': searches['random']['best_params'],
-        'winner': best_method,
-        'baseline_test': base_test, 'tuned_test': tuned_test,
-    }
 
     # Level C: inner folds choose params, outer folds score that choice.
     nested_scores = nested_cv(x_train, y_train, outer_folds, inner_folds, seed)
@@ -363,6 +360,20 @@ def run_experiment(data_path: Path = DATA_PATH, output_dir: Path = Path('results
         'methods': {name: {k: v for k, v in summary.items() if k != '_estimator'}
                     for name, summary in {**searches, 'optuna': optuna_stats}.items()},
         'regularization': regularization,
+    }
+    # Only now evaluate the untouched final test. Never tune after seeing its scores.
+    baseline = make_pipeline(x_train)
+    baseline.fit(x_train, y_train)
+    base_test = holdout_metrics(baseline, x_test, y_test)
+    tuned_test = holdout_metrics(searches[best_method]['_estimator'], x_test, y_test)
+    b = {
+        'baseline_cv_ap': float(np.mean(base_cv)),
+        'grid_cv_ap': searches['grid']['best_cv_ap'],
+        'grid_params': searches['grid']['best_params'],
+        'random_cv_ap': searches['random']['best_cv_ap'],
+        'random_params': searches['random']['best_params'],
+        'winner': best_method,
+        'baseline_test': base_test, 'tuned_test': tuned_test,
     }
     result = {
         'data': data_info,

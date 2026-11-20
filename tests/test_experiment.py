@@ -3,8 +3,9 @@ import numpy as np
 import pandas as pd
 import pytest
 from sklearn.datasets import make_classification
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold, cross_val_score, train_test_split
 
+import experiment
 from experiment import get_data, make_pipeline, run_experiment
 
 
@@ -55,6 +56,12 @@ def test_all_levels_smoke(tmp_path):
     assert (tmp_path / 'reports' / 'metrics.json').is_file()
     assert (tmp_path / 'reports' / 'REPORT.md').is_file()
     assert 0 <= r['B']['tuned_test']['average_precision'] <= 1
+    # Optuna must return real estimator parameters, not obsolete names.
+    x, _, _ = get_data(make_sample(tmp_path))
+    optuna_params = r['C']['methods']['optuna']['best_params']
+    make_pipeline(x).set_params(**optuna_params)
+    report = (tmp_path / 'reports' / 'REPORT.md').read_text(encoding='utf-8')
+    assert 'np.float64' not in report
 
 
 def test_invalid_target_is_rejected(tmp_path):
@@ -64,3 +71,26 @@ def test_invalid_target_is_rejected(tmp_path):
     frame.to_csv(path, index=False)
     with pytest.raises(ValueError, match='both classes'):
         get_data(path)
+
+
+def test_level_a_does_not_access_final_holdout(tmp_path, monkeypatch):
+    path = make_sample(tmp_path)
+    x, y, _ = get_data(path)
+    _, final_test, _, _ = train_test_split(
+        x, y, test_size=0.2, stratify=y, random_state=42,
+    )
+    final_ids = set(final_test.index)
+    observed = []
+    original = experiment.holdout_metrics
+
+    def record_holdout(model, x_val, y_val):
+        observed.append(set(x_val.index))
+        return original(model, x_val, y_val)
+
+    monkeypatch.setattr(experiment, 'holdout_metrics', record_holdout)
+    run_experiment(path, tmp_path / 'checked', quick=True)
+    assert len(observed) == 4  # A: two development splits; B: two final metrics
+    assert observed[0].isdisjoint(final_ids)
+    assert observed[1].isdisjoint(final_ids)
+    assert observed[-2] == final_ids
+    assert observed[-1] == final_ids
