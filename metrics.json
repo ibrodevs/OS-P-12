@@ -17,8 +17,8 @@
   "A": {
     "seed_1": 42,
     "seed_2": 49,
-    "holdout_ap_1": 0.27015594290070494,
-    "holdout_ap_2": 0.1637768203363532,
+    "holdout_ap_1": 0.1823726202025832,
+    "holdout_ap_2": 0.15072383691385147,
     "cv_scores": [
       0.17675528928127845,
       0.2656744098949442,
@@ -36,13 +36,13 @@
     "grid_params": {
       "model__C": 0.03,
       "model__class_weight": null,
-      "model__penalty": "l2"
+      "model__l1_ratio": 0.0
     },
     "random_cv_ap": 0.19330893265661517,
     "random_params": {
       "model__C": 2.5378155082656657,
       "model__class_weight": "balanced",
-      "model__penalty": "l1"
+      "model__l1_ratio": 1.0
     },
     "winner": "grid",
     "baseline_test": {
@@ -78,33 +78,33 @@
         "best_params": {
           "model__C": 0.03,
           "model__class_weight": null,
-          "model__penalty": "l2"
+          "model__l1_ratio": 0.0
         },
         "tested_candidates": 12,
         "total_cv_fits": 60,
-        "elapsed_seconds": 1.8287304060000054
+        "elapsed_seconds": 1.822197697
       },
       "random": {
         "best_cv_ap": 0.19330893265661517,
         "best_params": {
           "model__C": 2.5378155082656657,
           "model__class_weight": "balanced",
-          "model__penalty": "l1"
+          "model__l1_ratio": 1.0
         },
         "tested_candidates": 12,
         "total_cv_fits": 60,
-        "elapsed_seconds": 2.5907324050000113
+        "elapsed_seconds": 2.5925347329999937
       },
       "optuna": {
         "best_cv_ap": 0.1964288938900667,
         "best_params": {
           "model__C": 0.05415244119402541,
-          "model__penalty": "l2",
+          "model__l1_ratio": 0.0,
           "model__class_weight": null
         },
         "tested_candidates": 12,
         "total_cv_fits": 60,
-        "elapsed_seconds": 3.4556161659999987
+        "elapsed_seconds": 3.4068992779999974
       }
     },
     "regularization": {
@@ -113,7 +113,7 @@
         "best_params": {
           "model__C": 3.0,
           "model__class_weight": "balanced",
-          "model__penalty": "l1"
+          "model__l1_ratio": 1.0
         },
         "nonzero_coefficients": 14,
         "total_coefficients": 21
@@ -123,7 +123,7 @@
         "best_params": {
           "model__C": 0.03,
           "model__class_weight": null,
-          "model__penalty": "l2"
+          "model__l1_ratio": 0.0
         },
         "nonzero_coefficients": 21,
         "total_coefficients": 21
