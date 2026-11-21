@@ -1,7 +1,6 @@
-__pycache__/
-.pytest_cache/
 .venv/
+__pycache__/
 *.pyc
-.DS_Store
-results/
-data/*.csv
+pr12.img
+*.img
+results/*.log
